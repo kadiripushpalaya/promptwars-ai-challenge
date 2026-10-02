@@ -255,6 +255,25 @@ let cancellationChartInstance = null;
 let supportChartInstance = null;
 let isCustomMode = false;
 
+// ===== SECURITY: Input Sanitization =====
+// Escapes HTML special characters to prevent XSS when inserting user text into innerHTML
+function sanitizeText(str) {
+  if (typeof str !== 'string') return String(str ?? '');
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Input validation: clamp numeric value within [min, max]
+function clampNum(val, min, max) {
+  const n = Number(val);
+  if (isNaN(n)) return min;
+  return Math.max(min, Math.min(max, n));
+}
+
 // Initialize on DOM Load
 document.addEventListener('DOMContentLoaded', () => {
   safeCreateIcons();
@@ -769,17 +788,25 @@ function appendLedgerRecord(rec) {
 
   const row = document.createElement('div');
   row.className = 'p-3 rounded-xl bg-slate-950/80 border border-emerald-500/30 flex items-center justify-between text-xs transition-all';
+  // Sanitize all user-derived values to prevent XSS
+  const safeOrderId  = sanitizeText(rec.order_id);
+  const safeAction   = sanitizeText(rec.action_type);
+  const safeTime     = sanitizeText(rec.executed_at);
+  const safeOutcome  = sanitizeText(rec.customer_outcome);
+  const safeStore    = sanitizeText(rec.target_store);
+  const safeMargin   = sanitizeText(String(rec.margin_protected_inr));
+
   row.innerHTML = `
     <div>
       <div class="flex items-center gap-2">
-        <span class="font-bold text-white font-mono">${rec.order_id}</span>
-        <span class="px-2 py-0.2 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 font-mono">${rec.action_type}</span>
-        <span class="text-[10px] text-slate-400">@ ${rec.executed_at}</span>
+        <span class="font-bold text-white font-mono">${safeOrderId}</span>
+        <span class="px-2 py-0.2 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 font-mono">${safeAction}</span>
+        <span class="text-[10px] text-slate-400">@ ${safeTime}</span>
       </div>
-      <div class="text-[11px] text-slate-300 mt-0.5">${rec.customer_outcome} • Routed to <strong class="text-white">${rec.target_store}</strong></div>
+      <div class="text-[11px] text-slate-300 mt-0.5">${safeOutcome} • Routed to <strong class="text-white">${safeStore}</strong></div>
     </div>
     <div class="text-right">
-      <span class="text-emerald-400 font-bold font-mono">+₹${rec.margin_protected_inr}</span>
+      <span class="text-emerald-400 font-bold font-mono">+₹${safeMargin}</span>
       <div class="text-[9px] text-slate-500">Margin Protected</div>
     </div>
   `;
@@ -886,36 +913,40 @@ function setSyncText(text) {
 
 // Merchant Sentinel: Submit Voice / WhatsApp Text (Pure Static NLP Parser)
 function submitMerchantSync() {
-  const text = document.getElementById('sync-input-text').value.trim();
-  if (!text) {
+  const rawText = document.getElementById('sync-input-text').value.trim();
+  if (!rawText) {
     showToast('Please type a merchant voice/WhatsApp stock message.', 'error');
     return;
   }
+
+  // Security: limit input length and sanitize before rendering into DOM
+  const text = rawText.slice(0, 500);
+  const safeSku = sanitizeText(text);
 
   const resultBox = document.getElementById('sync-result-content');
   resultBox.innerText = 'Parsing intent & updating 620-store catalog availability in real time...';
 
   setTimeout(() => {
     let intent = "STOCK_EXHAUSTION";
-    let sku = text;
+    let safeSkuDisplay = safeSku;
     let action = "HIDE_FROM_CATALOG_TEMPORARILY";
     let reEnable = "Tomorrow 08:00 AM";
 
     if (text.toLowerCase().includes("bheed") || text.toLowerCase().includes("rush") || text.toLowerCase().includes("pause")) {
       intent = "STORE_RUSH_THROTTLE";
-      sku = "All Store Orders (STR-142)";
+      safeSkuDisplay = sanitizeText("All Store Orders (STR-142)");
       action = "AUTO_THROTTLE_AND_REROUTE_OVERFLOW";
       reEnable = "30 minutes from now";
     }
 
     resultBox.innerHTML = `
       <div class="text-emerald-400 font-bold mb-1">✔ Catalog Synchronization Successful (118ms)</div>
-      <div><strong>Detected Intent:</strong> ${intent}</div>
-      <div><strong>Extracted Target:</strong> "${sku}"</div>
-      <div><strong>Action Applied:</strong> ${action} across all customer apps</div>
-      <div><strong>Re-enable SLA:</strong> ${reEnable}</div>
+      <div><strong>Detected Intent:</strong> ${sanitizeText(intent)}</div>
+      <div><strong>Extracted Target:</strong> "${safeSkuDisplay}"</div>
+      <div><strong>Action Applied:</strong> ${sanitizeText(action)} across all customer apps</div>
+      <div><strong>Re-enable SLA:</strong> ${sanitizeText(reEnable)}</div>
     `;
-    showToast(`Catalog sync complete! "${sku}" updated across network.`, 'success');
+    showToast(`Catalog sync complete! "${safeSkuDisplay.slice(0, 60)}" updated across network.`, 'success');
   }, 250);
 }
 
@@ -1010,7 +1041,7 @@ async function launchQuickDemoTour() {
   executeAiAction();
 
   await new Promise(r => setTimeout(r, 2000));
-  showToast('Step 4: Checking Financial ROI & 2.7-Month Budget Payback', 'info');
+  showToast('Step 4: Checking Financial ROI — Illustrative Payback Estimate', 'info');
   switchTab('roi-calculator');
 
   await new Promise(r => setTimeout(r, 2000));
